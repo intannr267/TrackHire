@@ -14,6 +14,9 @@ import {
   Cell,
   Legend,
 } from "recharts";
+import { useRouter } from "next/navigation";
+import { ToastContainer, toast } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 type Job = {
   _id?: string;
@@ -24,7 +27,7 @@ type Job = {
 };
 
 const STATUS_OPTIONS = ["Applied", "Admitted", "Rejected", "HR Contacted", "User Interview"];
-const COLORS = ["#3b82f6", "#eab308", "#ef4444", "#22c55e"," #800080"]; 
+const COLORS = ["#3b82f6", "#eab308", "#ef4444", "#22c55e", "#800080"];
 
 export default function HomePage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -32,72 +35,136 @@ export default function HomePage() {
   const [position, setPosition] = useState("");
   const [filter, setFilter] = useState("All");
   const [chartData, setChartData] = useState<any[]>([]);
-  const [statusData, setStatusData] = useState<any[]>([]); 
-
-  const loadJobs = async () => {
-    const res = await fetch("/api/jobs");
-    const data = await res.json();
-    setJobs(data);
-    generateChartData(data);
-    generateStatusData(data);
-  };
+  const [statusData, setStatusData] = useState<any[]>([]);
+  const router = useRouter();
 
   useEffect(() => {
-    loadJobs();
+    const checkAuth = () => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        toast.info("Silakan login dulu ya!");
+        setTimeout(() => router.push("/login"), 1000);
+        return false;
+      }
+      return true;
+    };
+
+    if (checkAuth()) {
+      loadJobs();
+    }
+
+    const interval = setInterval(() => {
+      if (!localStorage.getItem("token")) {
+        router.push("/login");
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, []);
 
-  const addJob = async () => {
-    if (!company || !position) return alert("Isi semua kolom dulu!");
+  // 🔹 Load jobs
+  const loadJobs = async () => {
+    const res = await fetch("/api/jobs", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    });
+    const data = await res.json();
 
-    await fetch("/api/jobs/new", {
+    if (res.ok) {
+      setJobs(data);
+      generateChartData(data);
+      generateStatusData(data);
+    } else {
+      toast.error(data.error || "Gagal memuat data");
+    }
+  };
+
+  // 🔹 Add job
+  const addJob = async () => {
+    if (!company || !position) {
+      toast.warning("Isi semua kolom dulu!");
+      return;
+    }
+
+    const res = await fetch("/api/jobs/new", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
       body: JSON.stringify({ company, position }),
     });
 
-    setCompany("");
-    setPosition("");
-    loadJobs();
+    const data = await res.json();
+
+    if (res.ok) {
+      toast.success("Job berhasil ditambahkan!");
+      setCompany("");
+      setPosition("");
+      loadJobs();
+    } else {
+      toast.error(data.error || "Gagal menambah job");
+    }
   };
 
+  // 🔹 Update status
   const updateStatus = async (id: string, newStatus: string) => {
-    await fetch(`/api/jobs/update`, {
+    const res = await fetch(`/api/jobs/update`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
       body: JSON.stringify({ id, status: newStatus }),
     });
-    loadJobs();
+
+    if (res.ok) {
+      toast.info("Status berhasil diperbarui");
+      loadJobs();
+    } else {
+      toast.error("Gagal update status");
+    }
   };
 
+  // 🔹 Delete job
   const deleteJob = async (id: string) => {
-    if (!confirm("Yakin mau hapus job ini?")) return;
-    await fetch(`/api/jobs/delete`, {
+    const res = await fetch(`/api/jobs/delete`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
       body: JSON.stringify({ id }),
     });
-    loadJobs();
+
+    if (res.ok) {
+      toast.success("Job berhasil dihapus!");
+      loadJobs();
+    } else {
+      toast.error("Gagal menghapus job");
+    }
   };
 
-  // 🔹 Generate chart data for the last 7 days
+  // 🔹 Logout
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("name");
+    toast.success("Berhasil logout!");
+    setTimeout(() => router.push("/login"), 1000);
+  };
+
+  // 🔹 Chart Data
   const generateChartData = (allJobs: Job[]) => {
     const now = new Date();
     const past7Days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
       d.setDate(now.getDate() - (6 - i));
-      const day = d.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
+      const day = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       return { date: day, count: 0 };
     });
 
     allJobs.forEach((job) => {
       const jobDate = new Date(job.appliedAt);
-      const formatted = jobDate.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
+      const formatted = jobDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const found = past7Days.find((d) => d.date === formatted);
       if (found) found.count += 1;
     });
@@ -113,18 +180,23 @@ export default function HomePage() {
     setStatusData(statusCount);
   };
 
-  const filteredJobs =
-    filter === "All" ? jobs : jobs.filter((j) => j.status === filter);
+  const filteredJobs = filter === "All" ? jobs : jobs.filter((j) => j.status === filter);
 
   return (
-    <div className="min-h-screen bg-[#111] text-white font-mono p-10 flex flex-col">
+    <div className="min-h-screen bg-[#111] text-white font-mono p-10 flex flex-col relative ">
+      <button
+        onClick={handleLogout}
+        className="absolute top-6 right-6 bg-red-600 hover:bg-yellow-500 px-4 py-2 rounded-lg font-bold border-2 border-black text-white transition-all"
+      >
+        Logout
+      </button>
+
       <h1 className="text-5xl font-extrabold text-center mb-10 uppercase tracking-widest text-yellow-400 drop-shadow-[4px_4px_0px_#ff0080]">
         Job Tracker
       </h1>
 
-      {/* 📊 Charts Section */}
+      {/* Charts */}
       <div className="grid md:grid-cols-2 gap-8 mb-10">
-        {/* Bar Chart */}
         <div className="bg-black/70 border-4 border-pink-500 rounded-xl p-6">
           <h2 className="text-2xl font-bold text-yellow-400 mb-4 text-center">
             Applications in the Last 7 Days
@@ -134,44 +206,24 @@ export default function HomePage() {
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
               <XAxis dataKey="date" stroke="#fff" />
               <YAxis stroke="#fff" allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#000",
-                  border: "1px solid #555",
-                  color: "#fff",
-                }}
-              />
+              <Tooltip contentStyle={{ backgroundColor: "#000", border: "1px solid #555", color: "#fff" }} />
               <Bar dataKey="count" fill="#facc15" radius={[8, 8, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Pie Chart */}
         <div className="bg-black/70 border-4 border-yellow-400 rounded-xl p-6">
           <h2 className="text-2xl font-bold text-pink-400 mb-4 text-center">
-            Status Job Appliement
+             Aplication progress 
           </h2>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
-              <Pie
-                data={statusData}
-                cx="50%"
-                cy="50%"
-                outerRadius={90}
-                dataKey="value"
-                label
-              >
+              <Pie data={statusData} cx="50%" cy="50%" outerRadius={90} dataKey="value" label>
                 {statusData.map((_, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#000",
-                  border: "1px solid #555",
-                  color: "#fff",
-                }}
-              />
+              <Tooltip contentStyle={{ backgroundColor: "#000", border: "1px solid #555", color: "#fff" }} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
@@ -239,37 +291,18 @@ export default function HomePage() {
               </tr>
             ) : (
               filteredJobs.map((job) => (
-                <tr
-                  key={job._id}
-                  className="border-b border-gray-700 hover:bg-yellow-400/10 transition-all"
-                >
+                <tr key={job._id} className="border-b border-gray-700 hover:bg-yellow-400/10 transition-all">
                   <td className="p-4">{job.company}</td>
                   <td className="p-4">{job.position}</td>
-                  <td className="p-4">
-                    {new Date(job.appliedAt).toLocaleDateString()}
-                  </td>
+                  <td className="p-4">{new Date(job.appliedAt).toLocaleDateString()}</td>
                   <td className="p-4">
                     <select
                       value={job.status}
-                      onChange={(e) =>
-                        updateStatus(job._id as string, e.target.value)
-                      }
-                      className={`px-3 py-2 rounded-lg font-bold border-2 transition-all ${
-                        job.status === "Rejected"
-                          ? "border-red-500 bg-red-600/20 text-red-400"
-                          : job.status === "Not Responded"
-                          ? "border-yellow-500 bg-yellow-600/20 text-yellow-400"
-                          : job.status === "Applied"
-                          ? "border-blue-500 bg-blue-600/20 text-blue-400"
-                          : "border-green-500 bg-green-600/20 text-green-400"
-                      }`}
+                      onChange={(e) => updateStatus(job._id as string, e.target.value)}
+                      className="px-3 py-2 rounded-lg font-bold border-2"
                     >
                       {STATUS_OPTIONS.map((opt) => (
-                        <option
-                          key={opt}
-                          value={opt}
-                          className="bg-black text-white"
-                        >
+                        <option key={opt} value={opt} className="bg-black text-white">
                           {opt}
                         </option>
                       ))}
@@ -295,6 +328,7 @@ export default function HomePage() {
           </tbody>
         </table>
       </div>
+      <ToastContainer position="top-right" autoClose={2000} hideProgressBar />
     </div>
   );
 }
